@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Arcane Chess: Claybound Ascent</title>
+  <style>
+    body {
+      background: radial-gradient(circle at top, #1a1a2e, #0f0f1a);
+      color: white;
+      font-family: Arial;
+      text-align: center;
+    }
+
+    #game {
+      max-width: 1100px;
+      margin: auto;
+    }
+
+    .card {
+      display: inline-block;
+      background: #222;
+      border: 2px solid #555;
+      padding: 12px;
+      margin: 8px;
+      width: 180px;
+      cursor: pointer;
+      border-radius: 12px;
+      transition: 0.2s;
+      position: relative;
+    }
+
+    .card:hover {
+      border-color: gold;
+      transform: scale(1.08);
+    }
+
+    .card.played {
+      animation: playAnim 0.4s forwards;
+    }
+
+    @keyframes playAnim {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.2) rotate(5deg); }
+      100% { transform: scale(0); opacity: 0; }
+    }
+
+    .damageFlash {
+      animation: flash 0.3s;
+    }
+
+    @keyframes flash {
+      0% { background-color: darkred; }
+      100% { background-color: transparent; }
+    }
+
+    #map {
+      margin-bottom: 15px;
+    }
+
+    .node {
+      display: inline-block;
+      padding: 6px 12px;
+      margin: 5px;
+      border-radius: 6px;
+      background: #333;
+    }
+
+    .active {
+      background: gold;
+      color: black;
+    }
+
+    #log {
+      background: black;
+      padding: 10px;
+      height: 150px;
+      overflow-y: auto;
+      text-align: left;
+      margin-top: 20px;
+    }
+
+    button {
+      padding: 8px 15px;
+      margin: 8px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div id="game">
+  <h1>♟️ Arcane Chess: Claybound Ascent</h1>
+
+  <div id="map"></div>
+
+  <div>
+    HP: <span id="playerHP"></span> |
+    Block: <span id="block"></span> |
+    Mana: <span id="mana"></span>
+  </div>
+
+  <h2 id="enemyName"></h2>
+  <h3>Enemy HP: <span id="enemyHP"></span></h3>
+
+  <div id="hand"></div>
+
+  <button onclick="endTurn()">End Turn</button>
+  <button onclick="activateSacrifice()">Clay Sacrifice</button>
+
+  <div id="reward"></div>
+  <div id="log"></div>
+</div>
+
+<script>
+let playerHP = 70;
+let block = 0;
+let mana = 3;
+let floor = 0;
+let bonusDamage = 0;
+let sacrificeMode = false;
+
+let mapNodes = ["Battle","Battle","Elite","Battle","Boss"];
+let enemyHP;
+let enemyDamage;
+let enemyName;
+
+let deck = [
+  {name:"Pawn Strike",cost:1,damage:6},
+  {name:"Pawn Strike",cost:1,damage:6},
+  {name:"Rook Rampart",cost:1,block:6},
+  {name:"Rook Rampart",cost:1,block:6},
+  {name:"Bishop's Flame",cost:2,damage:5,burn:3}
+];
+
+let enemyBurn = 0;
+let hand = [];
+
+function renderMap(){
+  let mapDiv=document.getElementById("map");
+  mapDiv.innerHTML="";
+  mapNodes.forEach((node,i)=>{
+    let div=document.createElement("span");
+    div.className="node"+(i===floor?" active":"");
+    div.innerText=node;
+    mapDiv.appendChild(div);
+  });
+}
+
+function startNode(){
+  let type=mapNodes[floor];
+
+  if(type==="Boss"){
+    enemyHP=150;
+    enemyName="👑 Grand Archmage King";
+  } else if(type==="Elite"){
+    enemyHP=90;
+    enemyName="♞ Arcane Knight";
+  } else {
+    enemyHP=50+floor*10;
+    enemyName="♟️ Clay Soldier";
+  }
+
+  rollIntent();
+  drawHand();
+  renderMap();
+  updateUI();
+}
+
+function rollIntent(){
+  enemyDamage=Math.floor(Math.random()*6)+8+floor*2;
+}
+
+function updateUI(){
+  document.getElementById("playerHP").innerText=playerHP;
+  document.getElementById("block").innerText=block;
+  document.getElementById("mana").innerText=mana;
+  document.getElementById("enemyHP").innerText=enemyHP;
+  document.getElementById("enemyName").innerText=enemyName;
+}
+
+function drawHand(){
+  hand=[];
+  mana=3;
+  block=0;
+  for(let i=0;i<5;i++){
+    hand.push(deck[Math.floor(Math.random()*deck.length)]);
+  }
+  renderHand();
+}
+
+function renderHand(){
+  let area=document.getElementById("hand");
+  area.innerHTML="";
+  hand.forEach((card,i)=>{
+    let div=document.createElement("div");
+    div.className="card";
+    div.innerHTML=`
+      <strong>${card.name}</strong><br>
+      Cost:${card.cost}<br>
+      ${card.damage?"Damage:"+card.damage:""}
+      ${card.block?"Block:"+card.block:""}
+      ${card.burn?"Burn:"+card.burn:""}
+    `;
+    div.onclick=()=>playCard(i,div);
+    area.appendChild(div);
+  });
+}
+
+function playCard(i,div){
+  let card=hand[i];
+
+  if(sacrificeMode){
+    deck.splice(deck.indexOf(card),1);
+    log("Clay piece sacrificed permanently.");
+    sacrificeMode=false;
+    return;
+  }
+
+  if(mana<card.cost)return;
+  mana-=card.cost;
+
+  div.classList.add("played");
+
+  setTimeout(()=>{
+    if(card.damage){
+      let dmg=card.damage+bonusDamage;
+      enemyHP-=dmg;
+      flashEnemy();
+      log(card.name+" hits for "+dmg);
+    }
+    if(card.block){
+      block+=card.block;
+      log("Block +"+card.block);
+    }
+    if(card.burn){
+      enemyBurn+=card.burn;
+    }
+    updateUI();
+    checkEnemy();
+  },200);
+}
+
+function flashEnemy(){
+  let el=document.getElementById("enemyHP");
+  el.classList.add("damageFlash");
+  setTimeout(()=>el.classList.remove("damageFlash"),300);
+}
+
+function endTurn(){
+  if(enemyBurn>0){
+    enemyHP-=enemyBurn;
+    log("Burn deals "+enemyBurn);
+  }
+
+  let dmg=Math.max(enemyDamage-block,0);
+  playerHP-=dmg;
+  log(enemyName+" attacks for "+enemyDamage);
+
+  bonusDamage=0;
+  rollIntent();
+  updateUI();
+  checkGame();
+  drawHand();
+}
+
+function checkEnemy(){
+  if(enemyHP<=0){
+    log(enemyName+" defeated!");
+    floor++;
+    if(floor>=mapNodes.length){
+      alert("You defeated the Grand Archmage King! Victory!");
+      location.reload();
+    } else {
+      reward();
+    }
+  }
+}
+
+function reward(){
+  document.getElementById("reward").innerHTML="<h3>Choose a Chess Spell:</h3>";
+  let options=[
+    {name:"Queen's Gambit",cost:2,damage:16},
+    {name:"Fortified Castle",cost:2,block:14},
+    {name:"Knight's Blitz",cost:1,damage:8}
+  ];
+
+  options.forEach(card=>{
+    let div=document.createElement("div");
+    div.className="card";
+    div.innerHTML=`<strong>${card.name}</strong><br>Cost:${card.cost}`;
+    div.onclick=()=>{
+      deck.push(card);
+      document.getElementById("reward").innerHTML="";
+      startNode();
+    };
+    document.getElementById("reward").appendChild(div);
+  });
+}
+
+function activateSacrifice(){
+  sacrificeMode=true;
+  bonusDamage=4;
+  log("Select a clay piece to sacrifice. +4 damage this fight.");
+}
+
+function checkGame(){
+  if(playerHP<=0){
+    alert("Your clay army has fallen.");
+    location.reload();
+  }
+}
+
+function log(text){
+  let logDiv=document.getElementById("log");
+  logDiv.innerHTML+=text+"<br>";
+  logDiv.scrollTop=logDiv.scrollHeight;
+}
+
+startNode();
+</script>
+</body>
+</html>
